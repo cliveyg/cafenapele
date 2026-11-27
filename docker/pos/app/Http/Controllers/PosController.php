@@ -13,6 +13,7 @@ use Igniter\Cart\Models\Order;
 use Igniter\Cart\Models\Stock;
 use Igniter\Local\Facades\Location;
 use Igniter\Reservation\Models\DiningTable;
+use Igniter\User\Facades\AdminAuth;
 use Igniter\User\Facades\Auth;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -23,17 +24,41 @@ use Illuminate\View\View;
 
 class PosController extends Controller
 {
+    private const array MANAGER_GROUPS = ['managers', 'owners'];
+
     public function index(): View
     {
         $orders = DB::table('cafenapele_pos_orders as pos')
             ->join('orders', 'orders.order_id', '=', 'pos.order_id')
             ->leftJoin('dining_tables', 'dining_tables.id', '=', 'pos.dining_table_id')
+            ->leftJoin('admin_users as staff', 'staff.user_id', '=', 'pos.staff_id')
             ->where('orders.location_id', Location::getId())
             ->select('orders.order_id', 'orders.first_name', 'orders.order_total', 'orders.processed',
-                'pos.version', 'pos.dining_table_id', 'dining_tables.name as table_name')
-            ->orderByDesc('orders.order_id')->get();
+                'pos.version', 'pos.staff_id', 'pos.dining_table_id', 'dining_tables.name as table_name',
+                'staff.name as staff_name')
+            ->orderByDesc('orders.order_id')->get()
+            ->map(function ($order): object {
+                $order->can_manage = $this->canManageOrder($order->staff_id);
+
+                return $order;
+            });
 
         return view('pos.orders', compact('orders'));
+    }
+
+    private function canManageOrder(?int $staffId): bool
+    {
+        $staff = AdminAuth::user();
+        if (!$staff) {
+            return false;
+        }
+        if ($staff->isSuperUser() || ($staffId !== null && (int) $staffId === (int) $staff->getKey())) {
+            return true;
+        }
+
+        return $staff->groups
+            ->pluck('user_group_name')
+            ->contains(fn (string $group): bool => in_array(strtolower($group), self::MANAGER_GROUPS, true));
     }
 
     public static function tables(int $locationId): array
@@ -68,6 +93,9 @@ class PosController extends Controller
         abort_unless($pos && (int) $existing->location_id === (int) Location::getId(), 404);
         if ($existing->processed) {
             return redirect()->route('pos.orders')->with('error', 'Paid orders cannot be edited.');
+        }
+        if (!$this->canManageOrder($pos->staff_id)) {
+            return redirect()->route('pos.orders')->with('error', 'Only the server who opened this order, or a manager or owner, can edit it.');
         }
         if ($cartManager->getCart()->count()) {
             return redirect()->route('pos.orders')->with('error', 'Finish or discard the current cart before editing another order.');
@@ -117,6 +145,11 @@ class PosController extends Controller
         if (Auth::check()) {
             throw ValidationException::withMessages(['name' => 'Sign out of the customer account before placing a staff order.']);
         }
+        $staff = AdminAuth::user();
+        if (!$staff) {
+            throw ValidationException::withMessages(['name' => 'Log in to the staff admin before placing orders.']);
+        }
+        $staffId = $staff->getKey();
         if ($data['token'] !== $request->session()->get('pos.token')) {
             throw ValidationException::withMessages(['name' => 'This cart is no longer current. Reload the page.']);
         }
@@ -131,7 +164,7 @@ class PosController extends Controller
         $cartManager->validateLocation();
         $cartManager->validateOrderTime();
 
-        DB::transaction(function () use ($data, $orderManager): void {
+        DB::transaction(function () use ($data, $orderManager, $staffId): void {
             $id = $data['order_id'] ?? null;
             if ($id) {
                 $pos = DB::table('cafenapele_pos_orders')->where('order_id', $id)->lockForUpdate()->first();
@@ -139,6 +172,9 @@ class PosController extends Controller
                 if (!$pos || $order->processed
                     || (int) $pos->version !== (int) $data['version']) {
                     throw ValidationException::withMessages(['name' => 'This order changed or was paid. Reload it before saving.']);
+                }
+                if (!$this->canManageOrder($pos->staff_id)) {
+                    throw ValidationException::withMessages(['name' => 'Only the server who opened this order, or a manager or owner, can change it.']);
                 }
                 abort_unless((int) $order->location_id === (int) Location::getId(), 404);
             } else {
@@ -165,6 +201,7 @@ class PosController extends Controller
                 DB::table('cafenapele_pos_orders')->insert([
                     'order_id' => $order->getKey(),
                     'dining_table_id' => $data['table_id'] ?? null,
+                    'staff_id' => $staffId,
                     'draft_token' => $data['token'],
                     'version' => 1,
                     'created_at' => now(),
@@ -186,6 +223,9 @@ class PosController extends Controller
             $pos = DB::table('cafenapele_pos_orders')->where('order_id', $order)->lockForUpdate()->first();
             $orderModel = PosOrder::whereKey($order)->lockForUpdate()->firstOrFail();
             abort_unless($pos && (int) $orderModel->location_id === (int) Location::getId(), 404);
+            if (!$this->canManageOrder($pos->staff_id)) {
+                throw ValidationException::withMessages(['version' => 'Only the server who opened this order, or a manager or owner, can mark it paid.']);
+            }
             if ($orderModel->processed) {
                 return;
             }

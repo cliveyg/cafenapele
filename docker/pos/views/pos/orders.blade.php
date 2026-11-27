@@ -30,7 +30,8 @@
             <h2>#{{ $order->order_id }} &middot; {{ $order->first_name }}</h2>
             <p>Table: {{ $order->dining_table_id ? ($order->table_name ?? 'Removed table') : '<none>' }}</p>
             <p>{{ currency_format($order->order_total) }} &middot; {{ $order->processed ? 'Paid' : 'Unpaid' }}</p>
-            @unless($order->processed)
+            <p>Opened by {{ $order->staff_name ?? 'unknown' }}</p>
+            @if(!$order->processed && $order->can_manage)
                 <div class="actions">
                     <form method="post" action="{{ route('pos.edit', $order->order_id) }}">
                         @csrf
@@ -42,7 +43,7 @@
                         <button class="primary" type="submit">Mark paid</button>
                     </form>
                 </div>
-            @endunless
+            @endif
         </article>
     @empty
         <p>No orders yet.</p>
