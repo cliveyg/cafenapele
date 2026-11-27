@@ -8,6 +8,7 @@ use Igniter\User\Models\User;
 use Igniter\User\Models\UserGroup;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 use Tests\TestCase;
 
 class PosStaffOwnershipTest extends TestCase
