@@ -24,7 +24,7 @@ class PosCartRestoreTest extends TestCase
     {
         parent::setUp();
 
-        $staff = User::factory()->create();
+        $staff = User::factory()->create(['password' => Hash::make('password')]);
         $staff->groups()->attach(UserGroup::factory()->create(['user_group_name' => 'Managers']));
         AdminAuth::login($staff);
     }

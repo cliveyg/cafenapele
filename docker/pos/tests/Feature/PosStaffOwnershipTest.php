@@ -16,8 +16,8 @@ class PosStaffOwnershipTest extends TestCase
 
     public function test_another_server_cannot_mark_an_order_paid(): void
     {
-        $order = $this->openOrderBy(User::factory()->create());
-        $otherServer = User::factory()->create();
+        $order = $this->openOrderBy($this->staffUser());
+        $otherServer = $this->staffUser();
         AdminAuth::login($otherServer);
 
         $response = $this->post(route('pos.paid', $order->getKey()), ['version' => 1]);
@@ -28,8 +28,8 @@ class PosStaffOwnershipTest extends TestCase
 
     public function test_manager_can_mark_another_servers_order_paid(): void
     {
-        $order = $this->openOrderBy(User::factory()->create());
-        $manager = User::factory()->create();
+        $order = $this->openOrderBy($this->staffUser());
+        $manager = $this->staffUser();
         $manager->groups()->attach(UserGroup::factory()->create(['user_group_name' => 'Managers']));
         AdminAuth::login($manager);
 
@@ -37,6 +37,12 @@ class PosStaffOwnershipTest extends TestCase
             ->assertSessionDoesntHaveErrors();
 
         $this->assertTrue((bool) Order::find($order->getKey())->processed);
+    }
+
+    // The factory's bcrypt hash uses cost 10, but the test env uses BCRYPT_ROUNDS=4.
+    private function staffUser(): User
+    {
+        return User::factory()->create(['password' => Hash::make('password')]);
     }
 
     private function openOrderBy(User $staff): Order
