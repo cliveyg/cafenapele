@@ -1,8 +1,27 @@
-@if($cart->count())
+@php($openOrderId = session('pos.order_id'))
+@if($openOrderId)
+    @php($orderItems = \App\Http\Controllers\PosController::orderItems((int) $openOrderId))
+    <div class="mb-3">
+        <h5>Items on order #{{ $openOrderId }}</h5>
+        @forelse($orderItems as $orderItem)
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <span>{{ $orderItem->quantity }} &times; {{ $orderItem->name }} &middot; {{ currency_format($orderItem->subtotal) }}</span>
+                <form method="post" action="{{ route('pos.items.remove', [$openOrderId, $orderItem->order_menu_id]) }}">
+                    @csrf
+                    <input type="hidden" name="version" value="{{ session('pos.version') }}">
+                    <button type="submit" class="btn btn-sm btn-outline-danger">Remove</button>
+                </form>
+            </div>
+        @empty
+            <p class="text-muted">No items yet.</p>
+        @endforelse
+    </div>
+@endif
+@if($cart->count() || $openOrderId)
     <form method="post" action="{{ route('pos.save') }}" wire:ignore>
         @csrf
         <input type="hidden" name="token" value="{{ \App\Http\Controllers\PosController::draftToken(request()) }}">
-        <input type="hidden" name="order_id" value="{{ session('pos.order_id') }}">
+        <input type="hidden" name="order_id" value="{{ $openOrderId }}">
         <input type="hidden" name="version" value="{{ session('pos.version') }}">
         @foreach(['token', 'order_id', 'version'] as $field)
             @error($field) <p class="text-danger">{{ $message }}</p> @enderror
@@ -30,7 +49,11 @@
             @error('table_id') <p class="text-danger">{{ $message }}</p> @enderror
         </div>
         <button type="submit" class="btn btn-primary btn-lg w-100">
-            {{ session('pos.order_id') ? 'Save changes' : 'Place order' }}
+            @if($openOrderId)
+                {{ $cart->count() ? 'Add items to order' : 'Save changes' }}
+            @else
+                Place order
+            @endif
         </button>
     </form>
 @endif

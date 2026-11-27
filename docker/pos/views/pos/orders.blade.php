@@ -20,8 +20,8 @@
     @if(session('success')) <p class="success">{{ session('success') }}</p> @endif
     @if(session('error')) <p class="error">{{ session('error') }}</p> @endif
     @if($errors->any()) <p class="error">{{ $errors->first() }}</p> @endif
-    <a class="button" href="{{ page_url('cart') }}">Current cart</a>
-    <form method="post" action="{{ route('pos.new') }}" style="display:inline" onsubmit="return confirm('Discard the current cart and start a new order?')">
+    <a class="button" href="{{ restaurant_url('local/menus') }}">Menu</a>
+    <form method="post" action="{{ route('pos.new') }}" style="display:inline" onsubmit="return confirm('Discard the items currently on the menu and start a new order?')">
         @csrf
         <button class="primary" type="submit">New order</button>
     </form>

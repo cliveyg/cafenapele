@@ -24,6 +24,7 @@ class AppServiceProvider extends ServiceProvider
                 Route::post('/orders', [PosController::class, 'save'])->name('save');
                 Route::post('/orders/{order}/edit', [PosController::class, 'edit'])->name('edit');
                 Route::post('/orders/{order}/paid', [PosController::class, 'paid'])->name('paid');
+                Route::post('/orders/{order}/items/{orderMenu}/remove', [PosController::class, 'removeItem'])->name('items.remove');
                 Route::post('/new', [PosController::class, 'newOrder'])->name('new');
             });
 

@@ -17,6 +17,7 @@ use Igniter\User\Facades\AdminAuth;
 use Igniter\User\Facades\Auth;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -98,28 +99,7 @@ class PosController extends Controller
             return redirect()->route('pos.orders')->with('error', 'Only the server who opened this order, or a manager or owner, can edit it.');
         }
         if ($cartManager->getCart()->count()) {
-            return redirect()->route('pos.orders')->with('error', 'Finish or discard the current cart before editing another order.');
-        }
-
-        $cart = $cartManager->getCart();
-        $cart->destroy();
-        foreach ($existing->cart ?? [] as $item) {
-            if (!Menu::find($item['id'])) {
-                $cart->destroy();
-                return redirect()->route('pos.orders')->with('error', 'An item in this order no longer exists. The order was not changed.');
-            }
-            $subtotal = $item['subtotal'] ?? null;
-            unset($item['conditions']);
-            $cartItem = $cart->add($item);
-            $cart->associate($cartItem->rowId, Menu::class);
-            if ($subtotal === null || round((float) $subtotal, 4) !== round((float) $cartItem->subtotal(), 4)) {
-                $cart->destroy();
-                return redirect()->route('pos.orders')->with('error', 'The original item totals cannot be restored. The order was not changed.');
-            }
-        }
-        if (!$cart->count() || round((float) $existing->order_total, 4) !== round((float) $cart->total(), 4)) {
-            $cart->destroy();
-            return redirect()->route('pos.orders')->with('error', 'The original order total cannot be restored. The order was not changed.');
+            return redirect()->route('pos.orders')->with('error', 'Add or discard the items on the menu before opening another order.');
         }
 
         $request->session()->put('pos', [
@@ -130,7 +110,7 @@ class PosController extends Controller
             'table_id' => $pos->dining_table_id,
         ]);
 
-        return redirect(page_url('cart'));
+        return redirect(restaurant_url('local/menus'));
     }
 
     public function save(Request $request, CartManager $cartManager, OrderManager $orderManager): RedirectResponse
@@ -160,11 +140,18 @@ class PosController extends Controller
         if (!empty($data['table_id']) && !array_key_exists($data['table_id'], self::tables(Location::getId()))) {
             throw ValidationException::withMessages(['table_id' => 'Select an available table.']);
         }
-        $cartManager->validateContents();
-        $cartManager->validateLocation();
-        $cartManager->validateOrderTime();
+        $cart = $cartManager->getCart();
+        $hasItems = $cart->count() > 0;
+        if (!$hasItems && empty($data['order_id'])) {
+            throw ValidationException::withMessages(['name' => 'Add at least one item before placing the order.']);
+        }
+        if ($hasItems) {
+            $cartManager->validateContents();
+            $cartManager->validateLocation();
+            $cartManager->validateOrderTime();
+        }
 
-        DB::transaction(function () use ($data, $orderManager, $staffId): void {
+        DB::transaction(function () use ($data, $orderManager, $staffId, $cart, $hasItems): void {
             $id = $data['order_id'] ?? null;
             if ($id) {
                 $pos = DB::table('cafenapele_pos_orders')->where('order_id', $id)->lockForUpdate()->first();
@@ -190,7 +177,14 @@ class PosController extends Controller
                 }
             }
 
-            $orderManager->saveOrder($order, ['first_name' => $data['name'], 'last_name' => '']);
+            if (!$id) {
+                $orderManager->saveOrder($order, ['first_name' => $data['name'], 'last_name' => '']);
+            } else {
+                $order->update(['first_name' => $data['name'], 'last_name' => '']);
+                if ($hasItems) {
+                    $this->appendItems($order, $cart->content()->all());
+                }
+            }
             if ($id) {
                 DB::table('cafenapele_pos_orders')->where('order_id', $id)->update([
                     'dining_table_id' => $data['table_id'] ?? null,
@@ -214,6 +208,89 @@ class PosController extends Controller
         $request->session()->forget('pos');
 
         return redirect()->route('pos.orders')->with('success', 'Order saved.');
+    }
+
+    /**
+     * Adds cart items to an existing order without replacing its current items.
+     */
+    private function appendItems(Order $order, iterable $cartItems): void
+    {
+        foreach ($cartItems as $cartItem) {
+            $orderMenu = $order->menus()->create([
+                'menu_id' => $cartItem->id,
+                'name' => $cartItem->name,
+                'quantity' => $cartItem->qty,
+                'price' => $cartItem->price,
+                'subtotal' => $cartItem->subtotal,
+                'comment' => $cartItem->comment,
+                'option_values' => $cartItem->options,
+            ]);
+
+            foreach ($cartItem->options ?? [] as $menuOption) {
+                foreach ($menuOption->values as $value) {
+                    $freeQty = $value->free_qty ?? 0;
+                    $order->menu_options()->create([
+                        'order_menu_id' => $orderMenu->getKey(),
+                        'menu_option_id' => $menuOption->id,
+                        'menu_option_value_id' => $value->id,
+                        'order_option_name' => $value->name,
+                        'order_option_price' => max(0, $value->qty - $freeQty) > 0 ? $value->price : 0,
+                        'quantity' => $value->qty,
+                        'free_qty' => $freeQty,
+                    ]);
+                }
+            }
+        }
+
+        $order->calculateTotals();
+    }
+
+    /**
+     * Removes one item, with its options, from an open order.
+     */
+    public function removeItem(Request $request, int $order, int $orderMenu): RedirectResponse
+    {
+        $data = $request->validate(['version' => ['required', 'integer', 'min:1']]);
+        $newVersion = null;
+        DB::transaction(function () use ($order, $orderMenu, $data, &$newVersion): void {
+            $pos = DB::table('cafenapele_pos_orders')->where('order_id', $order)->lockForUpdate()->first();
+            $orderModel = Order::whereKey($order)->lockForUpdate()->firstOrFail();
+            abort_unless($pos && (int) $orderModel->location_id === (int) Location::getId(), 404);
+            if (!$this->canManageOrder($pos->staff_id)) {
+                throw ValidationException::withMessages(['version' => 'Only the server who opened this order, or a manager or owner, can change it.']);
+            }
+            if ($orderModel->processed) {
+                throw ValidationException::withMessages(['version' => 'Paid orders cannot be changed.']);
+            }
+            if ((int) $pos->version !== (int) $data['version']) {
+                throw ValidationException::withMessages(['version' => 'This order changed. Reload it before removing items.']);
+            }
+            $item = $orderModel->menus()->whereKey($orderMenu)->firstOrFail();
+            $orderModel->menu_options()->where('order_menu_id', $item->getKey())->delete();
+            $item->delete();
+            $orderModel->calculateTotals();
+
+            $newVersion = $pos->version + 1;
+            DB::table('cafenapele_pos_orders')->where('order_id', $order)->update([
+                'version' => $newVersion,
+                'updated_at' => now(),
+            ]);
+        }, 3);
+
+        if ((int) $request->session()->get('pos.order_id', 0) === $order) {
+            $request->session()->put('pos.version', $newVersion);
+        }
+
+        return redirect(restaurant_url('local/menus'))->with('success', 'Item removed.');
+    }
+
+    /**
+     * @return Collection<int, object>
+     */
+    public static function orderItems(int $orderId): Collection
+    {
+        return DB::table('order_menus')->where('order_id', $orderId)
+            ->orderBy('order_menu_id')->get();
     }
 
     public function paid(Request $request, int $order): RedirectResponse
