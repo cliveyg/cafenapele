@@ -2,14 +2,17 @@
 
 namespace Tests\Feature;
 
+use App\Http\Controllers\PosController;
 use Igniter\Cart\Models\Order;
 use Igniter\Local\Facades\Location;
 use Igniter\User\Facades\AdminAuth;
 use Igniter\User\Models\User;
 use Igniter\User\Models\UserGroup;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Validation\ValidationException;
 use Tests\TestCase;
 
 class PosStaffOwnershipTest extends TestCase
@@ -19,12 +22,15 @@ class PosStaffOwnershipTest extends TestCase
     public function test_another_server_cannot_mark_an_order_paid(): void
     {
         $order = $this->openOrderBy($this->staffUser());
-        $otherServer = $this->staffUser();
-        AdminAuth::login($otherServer);
+        AdminAuth::login($this->staffUser());
 
-        $response = $this->post(route('pos.paid', $order->getKey()), ['version' => 1]);
+        try {
+            $this->markPaid($order);
+            $this->fail('A server who did not open the order must not mark it paid.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('version', $exception->errors());
+        }
 
-        $response->assertSessionHasErrors('version');
         $this->assertFalse((bool) Order::find($order->getKey())->processed);
     }
 
@@ -35,10 +41,17 @@ class PosStaffOwnershipTest extends TestCase
         $manager->groups()->attach(UserGroup::factory()->create(['user_group_name' => 'Managers']));
         AdminAuth::login($manager);
 
-        $this->post(route('pos.paid', $order->getKey()), ['version' => 1])
-            ->assertSessionDoesntHaveErrors();
+        $this->markPaid($order);
 
         $this->assertTrue((bool) Order::find($order->getKey())->processed);
+    }
+
+    private function markPaid(Order $order): void
+    {
+        $request = Request::create('/pos/orders/'.$order->getKey().'/paid', 'POST', ['version' => 1]);
+        $request->setLaravelSession($this->app['session']->driver());
+
+        (new PosController)->paid($request, $order->getKey());
     }
 
     // The factory's bcrypt hash uses cost 10, but the test env uses BCRYPT_ROUNDS=4.
