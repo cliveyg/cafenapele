@@ -20,4 +20,6 @@ Named volumes keep data across restarts/rebuilds: `db_data` (MySQL), `app_storag
 The Orange theme's home page replaces the address search with a View Menu button and hides the locations footer link. Other pages and saved theme settings are unchanged. These view overrides are built into the app image; rebuild the app to update them.
 
 ## POS prototype (not ready for use)
-This branch contains an incomplete POS prototype. Do not deploy it or use it for real orders: marking an order paid currently fails because TastyIgniter attempts to email the customer, and stock deduction, concurrent edits, and checkout blocking have not been fully verified. No staff-only access control is provided; the entire application must be protected externally.
+This branch contains an incomplete POS prototype. Do not deploy it or use it for real orders: stock deduction, concurrent edits, checkout blocking and other order paths have not been fully verified. No staff-only access control is provided; the entire application must be protected externally.
+
+POS orders use one customer name, kept with the order history. They do not create customer accounts or collect surnames, email addresses or telephone numbers. Customer emails are suppressed when staff mark an order paid through the POS; configured staff notifications still apply.

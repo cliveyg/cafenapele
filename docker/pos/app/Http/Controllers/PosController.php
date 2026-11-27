@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\PosOrder;
 use Igniter\Cart\Classes\CartManager;
 use Igniter\Cart\Classes\OrderManager;
 use Igniter\Cart\Models\Menu;
@@ -164,7 +165,7 @@ class PosController extends Controller
         $data = $request->validate(['version' => ['required', 'integer', 'min:1']]);
         DB::transaction(function () use ($order, $data): void {
             $pos = DB::table('cafenapele_pos_orders')->where('order_id', $order)->lockForUpdate()->first();
-            $orderModel = Order::whereKey($order)->lockForUpdate()->firstOrFail();
+            $orderModel = PosOrder::whereKey($order)->lockForUpdate()->firstOrFail();
             abort_unless($pos && (int) $orderModel->location_id === (int) Location::getId(), 404);
             if ($orderModel->processed) {
                 return;
