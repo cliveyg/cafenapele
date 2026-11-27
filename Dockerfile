@@ -32,6 +32,9 @@ RUN mkdir -p resources/views/cafenapele \
         resources/views/cafenapele/original-footer-menu.blade.php
 
 COPY docker/theme-overrides/ /var/www/html/resources/views/
+COPY docker/pos/app/ /var/www/html/app/
+COPY docker/pos/database/ /var/www/html/database/
+COPY docker/pos/views/ /var/www/html/resources/views/
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh \
     && chown -R www-data:www-data /var/www/html \

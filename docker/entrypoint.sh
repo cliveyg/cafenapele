@@ -32,6 +32,8 @@ if ! grep -Eq '^APP_KEY=.+' "$PERSIST_ENV" && [ -z "${APP_KEY}" ]; then
     php artisan key:generate --force
 fi
 
+php artisan migrate --path=database/migrations/2026_11_27_000001_create_pos_orders_table.php --force --no-interaction
+
 php artisan storage:link >/dev/null 2>&1 || true
 chown -R www-data:www-data public storage bootstrap/cache extensions themes 2>/dev/null || true
 

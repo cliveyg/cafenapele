@@ -1,0 +1,213 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use Igniter\Cart\Classes\CartManager;
+use Igniter\Cart\Classes\OrderManager;
+use Igniter\Cart\Models\Menu;
+use Igniter\Cart\Models\MenuItemOptionValue;
+use Igniter\Cart\Models\Order;
+use Igniter\Cart\Models\Stock;
+use Igniter\Local\Facades\Location;
+use Igniter\Reservation\Models\DiningTable;
+use Igniter\User\Facades\Auth;
+use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
+use Illuminate\View\View;
+
+class PosController extends Controller
+{
+    public function index(): View
+    {
+        $orders = DB::table('cafenapele_pos_orders as pos')
+            ->join('orders', 'orders.order_id', '=', 'pos.order_id')
+            ->leftJoin('dining_tables', 'dining_tables.id', '=', 'pos.dining_table_id')
+            ->where('orders.location_id', Location::getId())
+            ->select('orders.order_id', 'orders.first_name', 'orders.order_total', 'orders.processed',
+                'pos.version', 'pos.dining_table_id', 'dining_tables.name as table_name')
+            ->orderByDesc('orders.order_id')->get();
+
+        return view('pos.orders', compact('orders'));
+    }
+
+    public static function tables(int $locationId): array
+    {
+        return DiningTable::query()
+            ->where('is_enabled', true)
+            ->whereHas('dining_area', fn ($query) => $query->where('location_id', $locationId))
+            ->orderBy('name')->pluck('name', 'id')->all();
+    }
+
+    public static function draftToken(Request $request): string
+    {
+        if (!$request->session()->has('pos.token')) {
+            $request->session()->put('pos.token', (string) Str::uuid());
+        }
+
+        return $request->session()->get('pos.token');
+    }
+
+    public function newOrder(Request $request, CartManager $cartManager): RedirectResponse
+    {
+        $cartManager->getCart()->clearContent();
+        $request->session()->forget('pos');
+
+        return redirect(restaurant_url('local/menus'));
+    }
+
+    public function edit(Request $request, int $order, CartManager $cartManager): RedirectResponse
+    {
+        $pos = DB::table('cafenapele_pos_orders')->where('order_id', $order)->first();
+        $existing = Order::findOrFail($order);
+        abort_unless($pos && (int) $existing->location_id === (int) Location::getId(), 404);
+        if ($existing->processed) {
+            return redirect()->route('pos.orders')->with('error', 'Paid orders cannot be edited.');
+        }
+        if ($cartManager->getCart()->count()) {
+            return redirect()->route('pos.orders')->with('error', 'Finish or discard the current cart before editing another order.');
+        }
+
+        $cart = $cartManager->getCart();
+        foreach ($existing->cart ?? [] as $item) {
+            if (!Menu::find($item['id'])) {
+                $cart->clearContent();
+                return redirect()->route('pos.orders')->with('error', 'An item in this order no longer exists. The order was not changed.');
+            }
+            $cartItem = $cart->add($item);
+            $cart->associate($cartItem->rowId, Menu::class);
+        }
+
+        $request->session()->put('pos', [
+            'order_id' => $order,
+            'version' => $pos->version,
+            'token' => $pos->draft_token,
+            'name' => $existing->first_name,
+            'table_id' => $pos->dining_table_id,
+        ]);
+
+        return redirect(page_url('cart'));
+    }
+
+    public function save(Request $request, CartManager $cartManager, OrderManager $orderManager): RedirectResponse
+    {
+        $data = $request->validate([
+            'name' => ['required', 'string', 'max:32'],
+            'table_id' => ['nullable', 'integer'],
+            'token' => ['required', 'uuid'],
+        ]);
+        if (Auth::check()) {
+            throw ValidationException::withMessages(['name' => 'Sign out of the customer account before placing a staff order.']);
+        }
+        if ($data['token'] !== $request->session()->get('pos.token')) {
+            throw ValidationException::withMessages(['name' => 'This cart is no longer current. Reload the page.']);
+        }
+        if (!empty($data['table_id']) && !array_key_exists($data['table_id'], self::tables(Location::getId()))) {
+            throw ValidationException::withMessages(['table_id' => 'Select an available table.']);
+        }
+        $cartManager->validateContents();
+        $cartManager->validateLocation();
+        $cartManager->validateOrderTime();
+
+        DB::transaction(function () use ($request, $data, $orderManager): void {
+            $id = $request->session()->get('pos.order_id');
+            if ($id) {
+                $pos = DB::table('cafenapele_pos_orders')->where('order_id', $id)->lockForUpdate()->first();
+                $order = Order::whereKey($id)->lockForUpdate()->firstOrFail();
+                if (!$pos || $pos->draft_token !== $data['token'] || $order->processed
+                    || (int) $pos->version !== (int) $request->session()->get('pos.version')) {
+                    throw ValidationException::withMessages(['name' => 'This order changed or was paid. Reload it before saving.']);
+                }
+                abort_unless((int) $order->location_id === (int) Location::getId(), 404);
+            } else {
+                if (DB::table('cafenapele_pos_orders')->where('draft_token', $data['token'])->exists()) {
+                    return;
+                }
+                $order = new Order(['first_name' => $data['name'], 'last_name' => '', 'email' => '', 'telephone' => '']);
+                $orderManager->applyRequiredAttributes($order);
+                $order->save();
+                $statusId = setting('default_order_status');
+                if (!$statusId || !$order->updateOrderStatus($statusId, ['notify' => false])) {
+                    throw ValidationException::withMessages(['name' => 'A default order status must be configured.']);
+                }
+            }
+
+            $orderManager->saveOrder($order, ['first_name' => $data['name'], 'last_name' => '']);
+            if ($id) {
+                DB::table('cafenapele_pos_orders')->where('order_id', $id)->update([
+                    'dining_table_id' => $data['table_id'] ?? null,
+                    'version' => $pos->version + 1,
+                    'updated_at' => now(),
+                ]);
+            } else {
+                DB::table('cafenapele_pos_orders')->insert([
+                    'order_id' => $order->getKey(),
+                    'dining_table_id' => $data['table_id'] ?? null,
+                    'draft_token' => $data['token'],
+                    'version' => 1,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+            }
+        }, 3);
+
+        $cartManager->getCart()->clearContent();
+        $request->session()->forget('pos');
+
+        return redirect()->route('pos.orders')->with('success', 'Order saved.');
+    }
+
+    public function paid(Request $request, int $order): RedirectResponse
+    {
+        $data = $request->validate(['version' => ['required', 'integer', 'min:1']]);
+        DB::transaction(function () use ($order, $data): void {
+            $pos = DB::table('cafenapele_pos_orders')->where('order_id', $order)->lockForUpdate()->first();
+            $orderModel = Order::whereKey($order)->lockForUpdate()->firstOrFail();
+            abort_unless($pos && (int) $orderModel->location_id === (int) Location::getId(), 404);
+            if ($orderModel->processed) {
+                return;
+            }
+            if ((int) $pos->version !== (int) $data['version']) {
+                throw ValidationException::withMessages(['version' => 'This order changed. Reload the order list before marking it paid.']);
+            }
+
+            $this->lockAndValidateStock($orderModel);
+            $orderModel->markAsPaymentProcessed();
+            DB::table('cafenapele_pos_orders')->where('order_id', $order)->update([
+                'version' => $pos->version + 1,
+                'updated_at' => now(),
+            ]);
+        }, 3);
+
+        return redirect()->route('pos.orders')->with('success', 'Order marked paid.');
+    }
+
+    private function lockAndValidateStock(Order $order): void
+    {
+        $quantities = [];
+        foreach ($order->getOrderMenus() as $item) {
+            $menu = Menu::find($item->menu_id);
+            if (!$menu) {
+                throw ValidationException::withMessages(['version' => 'An ordered item no longer exists. The order was not marked paid.']);
+            }
+            $stock = $menu->getStockByLocation($order->location_id);
+            $quantities[$stock->id] = ($quantities[$stock->id] ?? 0) + $item->quantity;
+        }
+        foreach ($order->menu_options as $option) {
+            $value = MenuItemOptionValue::find($option->menu_option_value_id)?->option_value;
+            if (!$value) {
+                throw ValidationException::withMessages(['version' => 'An ordered option no longer exists. The order was not marked paid.']);
+            }
+            $stock = $value->getStockByLocation($order->location_id);
+            $quantities[$stock->id] = ($quantities[$stock->id] ?? 0) + $option->quantity;
+        }
+        $stocks = Stock::whereIn('id', array_keys($quantities))->orderBy('id')->lockForUpdate()->get();
+        foreach ($stocks as $stock) {
+            if (!$stock->checkStock($quantities[$stock->id])) {
+                throw ValidationException::withMessages(['version' => 'There is not enough stock to mark this order paid.']);
+            }
+        }
+    }
+}
