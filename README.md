@@ -10,6 +10,11 @@ docker compose exec app php artisan igniter:install   # one-off: set up DB table
 When prompted for the database use host `db`, port `3306` and the credentials from `.env`.
 Then open `APP_URL` (admin at `/admin`). The first build on a Pi 4 takes several minutes.
 
+The app's database startup check does not verify MySQL's TLS certificate, because the default MySQL image uses a self-signed certificate. Use a trusted Docker network; this check does not authenticate the database server.
+
 ## Persistence
 Named volumes keep data across restarts/rebuilds: `db_data` (MySQL), `app_storage` (storage, uploads and the app `.env`/APP_KEY), `app_extensions`, `app_themes`, and `app_public` (public assets shared with nginx). On startup the app refreshes the bundled public files in `app_public` without deleting other files.
 `docker compose down` keeps them; `docker compose down -v` deletes them.
+
+## Staff landing page
+The Orange theme's home page replaces the address search with a View Menu button and hides the locations footer link. Other pages and saved theme settings are unchanged. These view overrides are built into the app image; rebuild the app to update them.

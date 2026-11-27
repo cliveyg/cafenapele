@@ -25,6 +25,13 @@ RUN rm -rf /var/www/html/* \
     && composer clear-cache \
     && cp -a public /usr/local/share/tastyigniter-public
 
+RUN mkdir -p resources/views/cafenapele \
+    && cp vendor/tastyigniter/ti-theme-orange/resources/views/livewire/local-search.blade.php \
+        resources/views/cafenapele/original-local-search.blade.php \
+    && cp vendor/tastyigniter/ti-theme-orange/resources/views/includes/navs/footer-menu.blade.php \
+        resources/views/cafenapele/original-footer-menu.blade.php
+
+COPY docker/theme-overrides/ /var/www/html/resources/views/
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh \
     && chown -R www-data:www-data /var/www/html \

@@ -21,7 +21,7 @@ mkdir -p storage/app/public storage/framework/cache storage/framework/sessions \
 # Wait for MySQL
 echo "Waiting for database ${DB_HOST}:${DB_PORT:-3306}..."
 i=0
-until mysqladmin ping -h "${DB_HOST}" -P "${DB_PORT:-3306}" -u"${DB_USERNAME}" -p"${DB_PASSWORD}" --silent 2>/dev/null; do
+until mysqladmin ping --skip-ssl-verify-server-cert -h "${DB_HOST}" -P "${DB_PORT:-3306}" -u"${DB_USERNAME}" -p"${DB_PASSWORD}" --silent 2>/dev/null; do
     i=$((i+1))
     if [ "$i" -ge 60 ]; then echo "Database not reachable" >&2; exit 1; fi
     sleep 3
