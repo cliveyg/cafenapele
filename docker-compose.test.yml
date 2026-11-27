@@ -1,0 +1,8 @@
+# Test-only override. Mounts the POS feature tests into the app container.
+# Not used in production. Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.test.yml up -d app
+#   docker compose -f docker-compose.yml -f docker-compose.test.yml exec app php artisan test --filter=Pos
+services:
+  app:
+    volumes:
+      - ./docker/pos/tests/Feature:/var/www/html/tests/Feature:ro
