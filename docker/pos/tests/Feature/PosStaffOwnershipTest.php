@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use Igniter\Cart\Models\Order;
+use Igniter\Local\Facades\Location;
 use Igniter\User\Facades\AdminAuth;
 use Igniter\User\Models\User;
 use Igniter\User\Models\UserGroup;
@@ -49,6 +50,9 @@ class PosStaffOwnershipTest extends TestCase
     private function openOrderBy(User $staff): Order
     {
         $order = Order::factory()->create(['processed' => false]);
+        Location::shouldReceive('getId')->andReturn($order->location_id)->byDefault();
+        Location::shouldReceive('current')->andReturnNull()->byDefault();
+        Location::shouldReceive('currentOrDefault')->andReturnNull()->byDefault();
         DB::table('cafenapele_pos_orders')->insert([
             'order_id' => $order->getKey(),
             'staff_id' => $staff->getKey(),
