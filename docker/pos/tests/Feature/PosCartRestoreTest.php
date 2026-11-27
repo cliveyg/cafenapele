@@ -8,6 +8,9 @@ use Igniter\Cart\Classes\CartManager;
 use Igniter\Cart\Models\Menu;
 use Igniter\Cart\Models\Order;
 use Igniter\Local\Facades\Location;
+use Igniter\User\Facades\AdminAuth;
+use Igniter\User\Models\User;
+use Igniter\User\Models\UserGroup;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -16,6 +19,15 @@ use Tests\TestCase;
 class PosCartRestoreTest extends TestCase
 {
     use DatabaseTransactions;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $staff = User::factory()->create();
+        $staff->groups()->attach(UserGroup::factory()->create(['user_group_name' => 'Managers']));
+        AdminAuth::login($staff);
+    }
 
     public function test_starting_a_new_order_clears_previous_cart_condition_data(): void
     {

@@ -5,12 +5,27 @@ namespace Tests\Feature;
 use App\Http\Controllers\PosController;
 use Igniter\Cart\Classes\CartManager;
 use Igniter\Cart\Classes\OrderManager;
+use Igniter\User\Facades\AdminAuth;
+use Igniter\User\Models\User;
+use Igniter\User\Models\UserGroup;
+use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
 use Tests\TestCase;
 
 class PosStaleCartTest extends TestCase
 {
+    use DatabaseTransactions;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $staff = User::factory()->create();
+        $staff->groups()->attach(UserGroup::factory()->create(['user_group_name' => 'Managers']));
+        AdminAuth::login($staff);
+    }
+
     public function test_zero_is_not_accepted_as_a_table(): void
     {
         $request = Request::create('/pos/orders', 'POST', [
