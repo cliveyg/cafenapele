@@ -23,3 +23,5 @@ The Orange theme's home page replaces the address search with a View Menu button
 This branch contains an incomplete POS prototype. Do not deploy it or use it for real orders: stock deduction, concurrent edits, checkout blocking and other order paths have not been fully verified. No staff-only access control is provided; the entire application must be protected externally.
 
 POS orders use one customer name, kept with the order history. They do not create customer accounts or collect surnames, email addresses or telephone numbers. Customer emails are suppressed when staff mark an order paid through the POS; configured staff notifications still apply.
+
+An edit is refused if the original item or order totals cannot be restored, such as when a discount or other cart condition has changed. The saved order is left unchanged.

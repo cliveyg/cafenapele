@@ -3,10 +3,12 @@
 namespace App\Http\Controllers;
 
 use App\Models\PosOrder;
+use App\Models\PosStock;
 use Igniter\Cart\Classes\CartManager;
 use Igniter\Cart\Classes\OrderManager;
 use Igniter\Cart\Models\Menu;
 use Igniter\Cart\Models\MenuItemOptionValue;
+use Igniter\Cart\Models\MenuOptionValue;
 use Igniter\Cart\Models\Order;
 use Igniter\Cart\Models\Stock;
 use Igniter\Local\Facades\Location;
@@ -53,7 +55,7 @@ class PosController extends Controller
 
     public function newOrder(Request $request, CartManager $cartManager): RedirectResponse
     {
-        $cartManager->getCart()->clearContent();
+        $cartManager->getCart()->destroy();
         $request->session()->forget('pos');
 
         return redirect(restaurant_url('local/menus'));
@@ -72,19 +74,30 @@ class PosController extends Controller
         }
 
         $cart = $cartManager->getCart();
+        $cart->destroy();
         foreach ($existing->cart ?? [] as $item) {
             if (!Menu::find($item['id'])) {
-                $cart->clearContent();
+                $cart->destroy();
                 return redirect()->route('pos.orders')->with('error', 'An item in this order no longer exists. The order was not changed.');
             }
+            $subtotal = $item['subtotal'] ?? null;
+            unset($item['conditions']);
             $cartItem = $cart->add($item);
             $cart->associate($cartItem->rowId, Menu::class);
+            if ($subtotal === null || round((float) $subtotal, 4) !== round((float) $cartItem->subtotal(), 4)) {
+                $cart->destroy();
+                return redirect()->route('pos.orders')->with('error', 'The original item totals cannot be restored. The order was not changed.');
+            }
+        }
+        if (!$cart->count() || round((float) $existing->order_total, 4) !== round((float) $cart->total(), 4)) {
+            $cart->destroy();
+            return redirect()->route('pos.orders')->with('error', 'The original order total cannot be restored. The order was not changed.');
         }
 
         $request->session()->put('pos', [
             'order_id' => $order,
             'version' => $pos->version,
-            'token' => $pos->draft_token,
+            'token' => (string) Str::uuid(),
             'name' => $existing->first_name,
             'table_id' => $pos->dining_table_id,
         ]);
@@ -96,14 +109,20 @@ class PosController extends Controller
     {
         $data = $request->validate([
             'name' => ['required', 'string', 'max:32'],
-            'table_id' => ['nullable', 'integer'],
+            'table_id' => ['nullable', 'integer', 'min:1'],
             'token' => ['required', 'uuid'],
+            'order_id' => ['nullable', 'integer', 'min:1'],
+            'version' => ['nullable', 'required_with:order_id', 'integer', 'min:1'],
         ]);
         if (Auth::check()) {
             throw ValidationException::withMessages(['name' => 'Sign out of the customer account before placing a staff order.']);
         }
         if ($data['token'] !== $request->session()->get('pos.token')) {
             throw ValidationException::withMessages(['name' => 'This cart is no longer current. Reload the page.']);
+        }
+        if ((int) ($data['order_id'] ?? 0) !== (int) $request->session()->get('pos.order_id', 0)
+            || (int) ($data['version'] ?? 0) !== (int) $request->session()->get('pos.version', 0)) {
+            throw ValidationException::withMessages(['name' => 'This cart is no longer current. Reload the order before saving.']);
         }
         if (!empty($data['table_id']) && !array_key_exists($data['table_id'], self::tables(Location::getId()))) {
             throw ValidationException::withMessages(['table_id' => 'Select an available table.']);
@@ -112,13 +131,13 @@ class PosController extends Controller
         $cartManager->validateLocation();
         $cartManager->validateOrderTime();
 
-        DB::transaction(function () use ($request, $data, $orderManager): void {
-            $id = $request->session()->get('pos.order_id');
+        DB::transaction(function () use ($data, $orderManager): void {
+            $id = $data['order_id'] ?? null;
             if ($id) {
                 $pos = DB::table('cafenapele_pos_orders')->where('order_id', $id)->lockForUpdate()->first();
                 $order = Order::whereKey($id)->lockForUpdate()->firstOrFail();
-                if (!$pos || $pos->draft_token !== $data['token'] || $order->processed
-                    || (int) $pos->version !== (int) $request->session()->get('pos.version')) {
+                if (!$pos || $order->processed
+                    || (int) $pos->version !== (int) $data['version']) {
                     throw ValidationException::withMessages(['name' => 'This order changed or was paid. Reload it before saving.']);
                 }
                 abort_unless((int) $order->location_id === (int) Location::getId(), 404);
@@ -154,7 +173,7 @@ class PosController extends Controller
             }
         }, 3);
 
-        $cartManager->getCart()->clearContent();
+        $cartManager->getCart()->destroy();
         $request->session()->forget('pos');
 
         return redirect()->route('pos.orders')->with('success', 'Order saved.');
@@ -187,22 +206,37 @@ class PosController extends Controller
 
     private function lockAndValidateStock(Order $order): void
     {
+        $items = $order->getOrderMenus();
+        $options = $order->menu_options;
+        $menus = Menu::whereIn('menu_id', $items->pluck('menu_id')->unique())
+            ->orderBy('menu_id')->lockForUpdate()->get()->keyBy('menu_id');
+        $optionLinks = MenuItemOptionValue::whereIn('menu_option_value_id', $options->pluck('menu_option_value_id')->unique())
+            ->orderBy('menu_option_value_id')->lockForUpdate()->get()->keyBy('menu_option_value_id');
+        $optionValues = MenuOptionValue::whereIn('option_value_id', $optionLinks->pluck('option_value_id')->unique())
+            ->orderBy('option_value_id')->lockForUpdate()->get()->keyBy('option_value_id');
+
         $quantities = [];
-        foreach ($order->getOrderMenus() as $item) {
-            $menu = Menu::find($item->menu_id);
+        foreach ($items as $item) {
+            $menu = $menus->get($item->menu_id);
             if (!$menu) {
                 throw ValidationException::withMessages(['version' => 'An ordered item no longer exists. The order was not marked paid.']);
             }
-            $stock = $menu->getStockByLocation($order->location_id);
+            $stock = PosStock::lock($menu, $order->location_id);
             $quantities[$stock->id] = ($quantities[$stock->id] ?? 0) + $item->quantity;
         }
-        foreach ($order->menu_options as $option) {
-            $value = MenuItemOptionValue::find($option->menu_option_value_id)?->option_value;
+        $itemsById = $items->keyBy('order_menu_id');
+        foreach ($options as $option) {
+            $item = $itemsById->get($option->order_menu_id);
+            if (!$item) {
+                throw ValidationException::withMessages(['version' => 'An ordered option has no item. The order was not marked paid.']);
+            }
+            $link = $optionLinks->get($option->menu_option_value_id);
+            $value = $link ? $optionValues->get($link->option_value_id) : null;
             if (!$value) {
                 throw ValidationException::withMessages(['version' => 'An ordered option no longer exists. The order was not marked paid.']);
             }
-            $stock = $value->getStockByLocation($order->location_id);
-            $quantities[$stock->id] = ($quantities[$stock->id] ?? 0) + $option->quantity;
+            $stock = PosStock::lock($value, $order->location_id);
+            $quantities[$stock->id] = ($quantities[$stock->id] ?? 0) + $option->quantity * $item->quantity;
         }
         $stocks = Stock::whereIn('id', array_keys($quantities))->orderBy('id')->lockForUpdate()->get();
         foreach ($stocks as $stock) {
