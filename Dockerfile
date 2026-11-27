@@ -34,7 +34,6 @@ RUN mkdir -p resources/views/cafenapele \
 COPY docker/theme-overrides/ /var/www/html/resources/views/
 COPY docker/pos/app/ /var/www/html/app/
 COPY docker/pos/database/ /var/www/html/database/
-COPY docker/pos/tests/ /var/www/html/tests/
 COPY docker/pos/views/ /var/www/html/resources/views/
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh \
