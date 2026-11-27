@@ -1,5 +1,5 @@
 # cafenapele
-A dockerized version of [TastyIgniter](https://github.com/tastyigniter/TastyIgniter), with MySQL 8 in a separate container. Uses multi-arch images, so it runs on a Raspberry Pi 4 (64-bit OS recommended) as well as amd64.
+A dockerized version of [TastyIgniter](https://github.com/tastyigniter/TastyIgniter), served by nginx and PHP-FPM, with MySQL 8 in a separate container. Uses multi-arch images, so it runs on a Raspberry Pi 4 (64-bit OS recommended) as well as amd64.
 
 ## Usage
 ```sh
@@ -11,5 +11,5 @@ When prompted for the database use host `db`, port `3306` and the credentials fr
 Then open `APP_URL` (admin at `/admin`). The first build on a Pi 4 takes several minutes.
 
 ## Persistence
-Named volumes keep data across restarts/rebuilds: `db_data` (MySQL), `app_storage` (storage, uploads and the app `.env`/APP_KEY), `app_extensions`, `app_themes`.
+Named volumes keep data across restarts/rebuilds: `db_data` (MySQL), `app_storage` (storage, uploads and the app `.env`/APP_KEY), `app_extensions`, `app_themes`, and `app_public` (public assets shared with nginx). On startup the app refreshes the bundled public files in `app_public` without deleting other files.
 `docker compose down` keeps them; `docker compose down -v` deletes them.

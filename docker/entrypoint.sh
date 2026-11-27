@@ -2,6 +2,8 @@
 set -e
 cd /var/www/html
 
+cp -a /usr/local/share/tastyigniter-public/. public/
+
 # Keep .env on the persistent storage volume so APP_KEY etc. survive container re-creation.
 PERSIST_ENV=/var/www/html/storage/.env
 if [ ! -f "$PERSIST_ENV" ]; then
@@ -31,6 +33,6 @@ if ! grep -Eq '^APP_KEY=.+' "$PERSIST_ENV" && [ -z "${APP_KEY}" ]; then
 fi
 
 php artisan storage:link >/dev/null 2>&1 || true
-chown -R www-data:www-data storage bootstrap/cache extensions themes 2>/dev/null || true
+chown -R www-data:www-data public storage bootstrap/cache extensions themes 2>/dev/null || true
 
 exec docker-php-entrypoint "$@"
