@@ -2,17 +2,22 @@
 
 namespace App\Providers;
 
+use App\Http\Controllers\AdminLoginController;
 use App\Http\Controllers\PosController;
 use Igniter\Cart\Http\Middleware\CartMiddleware;
 use Igniter\Flame\Exception\ApplicationException;
 use Igniter\Local\Http\Middleware\CheckLocation;
+use Igniter\User\Http\Controllers\Login;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
 {
-    public function register(): void {}
+    public function register(): void
+    {
+        $this->app->bind(Login::class, AdminLoginController::class);
+    }
 
     public function boot(): void
     {
