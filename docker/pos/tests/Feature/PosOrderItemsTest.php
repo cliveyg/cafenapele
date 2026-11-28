@@ -49,6 +49,18 @@ class PosOrderItemsTest extends TestCase
         $this->assertSame(2, (int) DB::table('cafenapele_pos_orders')->where('order_id', $order->getKey())->value('version'));
     }
 
+    public function test_the_order_view_lists_the_items_on_the_order(): void
+    {
+        $staff = $this->staffUser();
+        [$order] = $this->orderWithItems($staff);
+        AdminAuth::login($staff);
+
+        $view = (new PosController)->show($order->getKey());
+
+        $this->assertCount(2, $view->getData()['items']);
+        $this->assertSame($order->getKey(), $view->getData()['order']->order_id);
+    }
+
     // The factory's bcrypt hash uses cost 10, but the test env uses BCRYPT_ROUNDS=4.
     private function staffUser(): User
     {

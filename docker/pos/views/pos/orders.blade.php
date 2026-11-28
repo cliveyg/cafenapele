@@ -28,6 +28,7 @@
     @forelse($orders as $order)
         <article class="order">
             <h2>#{{ $order->order_id }} &middot; {{ $order->first_name }}</h2>
+            <p><a href="{{ route('pos.orders.show', $order->order_id) }}">View items</a></p>
             <p>Table: {{ $order->dining_table_id ? ($order->table_name ?? 'Removed table') : '<none>' }}</p>
             <p>{{ currency_format($order->order_total) }} &middot; {{ $order->processed ? 'Paid' : 'Unpaid' }}</p>
             <p>Opened by {{ $order->staff_name ?? 'unknown' }}</p>

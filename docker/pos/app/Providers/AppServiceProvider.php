@@ -21,6 +21,7 @@ class AppServiceProvider extends ServiceProvider
             ->name('pos.')
             ->group(function (): void {
                 Route::get('/orders', [PosController::class, 'index'])->name('orders');
+                Route::get('/orders/{order}', [PosController::class, 'show'])->name('orders.show');
                 Route::post('/orders', [PosController::class, 'save'])->name('save');
                 Route::post('/orders/{order}/edit', [PosController::class, 'edit'])->name('edit');
                 Route::post('/orders/{order}/paid', [PosController::class, 'paid'])->name('paid');

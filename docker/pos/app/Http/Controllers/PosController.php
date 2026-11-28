@@ -47,6 +47,23 @@ class PosController extends Controller
         return view('pos.orders', compact('orders'));
     }
 
+    public function show(int $order): View
+    {
+        $pos = DB::table('cafenapele_pos_orders')->where('order_id', $order)->first();
+        $orderRow = DB::table('orders')->where('order_id', $order)
+            ->where('location_id', Location::getId())->first();
+        abort_unless($pos && $orderRow, 404);
+
+        return view('pos.order', [
+            'order' => $orderRow,
+            'pos' => $pos,
+            'tableName' => $pos->dining_table_id
+                ? DB::table('dining_tables')->where('id', $pos->dining_table_id)->value('name') ?? 'Removed table'
+                : null,
+            'items' => self::orderItems($order),
+        ]);
+    }
+
     private function canManageOrder(?int $staffId): bool
     {
         $staff = AdminAuth::user();
